@@ -2,6 +2,10 @@
 
 Sistem informasi akuntansi membership dan pengakuan pendapatan pada FORME Fitness & Wellness. Aplikasi memakai HTML, CSS, JavaScript, Node.js built-in HTTP server, dan Supabase PostgreSQL melalui REST API.
 
+## Demo Aplikasi
+
+[**Kunjungi FORME Fitness & Wellness**](https://revalinazt.github.io/forme-fitness-wellness/)
+
 ## Struktur
 
 - `public/` - dashboard dan aplikasi frontend statis
