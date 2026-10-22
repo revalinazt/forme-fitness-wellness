@@ -1,7 +1,15 @@
-const state = { view: 'overview', data: { customers: [], plans: [], memberships: [], payments: [] }, demoClassSessions: [], demoClassRegistrations: [], config: {
-  url: 'https://vmecalefbqgjiexdhaab.supabase.co',
-  key: 'sb_publishable_FRGET5D7bDAdySoctcuI7Q_9dF-JCNO'
-}, planFilters: { service: '', duration: '' }, membershipFilter: 'active', membershipSearch: '', customerFilter: 'all', customerSearch: '', financeFilters: { startDate: '', endDate: '', account: 'all' }, paymentFilters: { startDate: '', endDate: '', method: '', status: '' }, classFilters: { service: 'all', date: '', status: 'all' }, selectedClassSessionId: '', showClassSessionForm: false, loading: false };
+const state = { view: 'overview', data: { customers: [], plans: [], memberships: [], payments: [] }, config: {
+  url: '',
+  key: ''
+}, planFilters: { service: '', duration: '' }, membershipFilter: 'active', membershipSearch: '', customerFilter: 'all', customerSearch: '', financeFilters: { startDate: '', endDate: '', account: 'all' }, paymentFilters: { startDate: '', endDate: '', method: '', status: '' }, loading: false };
+try {
+  const savedConfig = JSON.parse(localStorage.getItem('studioGymConfig') || 'null');
+  if (savedConfig && typeof savedConfig.url === 'string' && typeof savedConfig.key === 'string') {
+    state.config = savedConfig;
+  }
+} catch (error) {
+  console.error('Konfigurasi Supabase lokal tidak dapat dibaca:', error);
+}
 const $ = (selector) => document.querySelector(selector);
 const money = (value) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(value || 0));
 const date = (value) => value ? new Intl.DateTimeFormat('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(`${value}T00:00:00`)) : '-';
@@ -57,9 +65,8 @@ async function loadData(notify = true) {
   $('#connectionLabel').textContent = 'Memuat data Supabase';
   render();
   try {
-    const [customers, plans, memberships, payments] = await Promise.all([supabaseAll('customers'), supabase('membership_plans'), supabase('memberships'), supabase('payments')]);
+    const [customers, plans, memberships, payments] = await Promise.all(['customers', 'membership_plans', 'memberships', 'payments'].map(supabaseAll));
     state.data = { customers, plans, memberships, payments };
-    seedDemoClassRegistrations();
     state.loading = false;
     $('#connectionLabel').textContent = 'Supabase tersambung';
     render();
@@ -93,7 +100,6 @@ function taggedNonMembershipNotes(type, notes = '') {
   return `[FORME:non-membership:${type}]${cleaned ? ` ${cleaned}` : ''}`;
 }
 function cleanPaymentNotes(notes = '') { return String(notes).replace(/^\[FORME:non-membership:(trial|day_pass)\]\s*/i, '').trim(); }
-function paidForMembership(membershipId) { return state.data.payments.some((payment) => payment.membership_id === membershipId && payment.status === 'paid'); }
 function monthKey(value) { const parsed = value instanceof Date ? value : new Date(`${value}T00:00:00`); return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}`; }
 function monthStart(key) { return new Date(`${key}-01T00:00:00`); }
 function monthEnd(key) { const start = monthStart(key); return new Date(start.getFullYear(), start.getMonth() + 1, 0, 23, 59, 59); }
@@ -203,186 +209,23 @@ function membershipIsActive(membership, asOf = new Date()) {
     membership.end_date >= today
   );
 }
-const SCHEDULED_CLASSES = ['Pilates', 'Yoga', 'Zumba', 'Functional Training'];
-const FACILITY_SERVICES = ['Gym', 'Women Only'];
-const CLASS_CAPACITY_DEFAULTS = { Pilates: 10, Yoga: 12, Zumba: 15, 'Functional Training': 12 };
-const DEMO_CLASS_TEMPLATES = [
-  { service: 'Pilates', dayOffset: -1, start_time: '08:00', end_time: '09:00', instructor: 'Sarah Wijaya', capacity: 10 },
-  { service: 'Pilates', dayOffset: 1, start_time: '08:00', end_time: '09:00', instructor: 'Sarah Wijaya', capacity: 10 },
-  { service: 'Yoga', dayOffset: 1, start_time: '10:00', end_time: '11:00', instructor: 'Maya Putri', capacity: 12 },
-  { service: 'Zumba', dayOffset: 2, start_time: '18:00', end_time: '19:00', instructor: 'Rani Pratama', capacity: 15 },
-  { service: 'Functional Training', dayOffset: 3, start_time: '16:30', end_time: '17:30', instructor: 'Arif Nugraha', capacity: 12 }
-];
-function dateWithOffset(dayOffset) {
-  const value = new Date();
-  value.setDate(value.getDate() + dayOffset);
-  return dateKey(value);
-}
-function ensureDemoClassSchedule() {
-  if (state.demoClassSessions.length) return;
-  state.demoClassSessions = DEMO_CLASS_TEMPLATES.map((template, index) => ({
-    id: `demo-class-${index + 1}`,
-    ...template,
-    session_date: dateWithOffset(template.dayOffset)
-  }));
-  seedDemoClassRegistrations();
-}
-function planAccessServices(plan) {
-  const name = String(plan?.name || '').toLowerCase();
-  if (name.includes('all access')) return [...FACILITY_SERVICES, ...SCHEDULED_CLASSES];
-  return [...FACILITY_SERVICES, ...SCHEDULED_CLASSES].filter((service) => name.includes(service.toLowerCase()));
-}
-function planAccessDescription(plan) {
-  const services = planAccessServices(plan);
-  if (!services.length) return plan?.access_label || planService(plan);
-  return services.map((service) => `${service} · ${FACILITY_SERVICES.includes(service) ? 'facility access' : 'scheduled class'}`).join(' / ');
-}
-function membershipsForClass(service, asOf = new Date()) {
-  return state.data.memberships.filter((membership) =>
-    membershipIsActive(membership, asOf) &&
-    planAccessServices(planById(membership.plan_id)).includes(service)
-  );
-}
-function registrationsForSession(sessionId) {
-  return state.demoClassRegistrations.filter((registration) => registration.session_id === sessionId && registration.status === 'registered');
-}
-function seedDemoClassRegistrations() {
-  if (!state.demoClassSessions.length) return;
-  state.demoClassRegistrations = state.demoClassSessions.flatMap((session) => {
-    const uniqueMembers = new Map();
-    membershipsForClass(session.service, localClassTime(session.session_date, session.start_time)).forEach((membership) => {
-      if (!uniqueMembers.has(membership.customer_id)) uniqueMembers.set(membership.customer_id, membership);
-    });
-    return [...uniqueMembers.values()].slice(0, Number(session.capacity)).map((membership) => ({
-      id: `${session.id}-${membership.id}`,
-      session_id: session.id,
-      membership_id: membership.id,
-      status: 'registered',
-      created_at: new Date().toISOString()
-    }));
-  });
-}
-function classSlotsAvailable(session) {
-  return Math.max(Number(session.capacity) - registrationsForSession(session.id).length, 0);
-}
-function localClassTime(dateValue, timeValue) {
-  const [hours, minutes] = timeValue.split(':').map(Number);
-  const result = new Date(`${dateValue}T00:00:00`);
-  result.setHours(hours, minutes, 0, 0);
-  return result;
-}
-function classSessionStatus(session, now = new Date()) {
-  if (localClassTime(session.session_date, session.end_time) <= now) return 'completed';
-  const registered = registrationsForSession(session.id).length;
-  const capacity = Number(session.capacity);
-  if (registered >= capacity) return 'full';
-  if (registered / capacity >= 0.9) return 'almost_full';
-  return 'available';
-}
-function classStatusLabel(status) {
-  return ({ available: 'Available', almost_full: 'Almost Full', full: 'Full', completed: 'Completed' })[status] || status;
-}
+function planAccessDescription(plan) { return plan?.access_label || planService(plan); }
 function customerMembershipState(customerId, asOf = new Date()) {
   const records = state.data.memberships.filter((membership) => membership.customer_id === customerId);
   if (!records.length) return 'non_member';
-  return records.some((membership) => membershipIsActive(membership, asOf)) ? 'active' : 'expired';
+  if (records.some((membership) => membershipIsActive(membership, asOf))) return 'active';
+  if (records.some((membership) => membership.status === 'pending' || membership.status === 'active' && membership.start_date > dateKey(asOf))) return 'pending';
+  return 'expired';
 }
 function memberStatusLabel(status) {
-  return ({ active: 'Member Aktif', expired: 'Member Expired', non_member: 'Non-Member' })[status] || status;
+  return ({ active: 'Member Aktif', pending: 'Member Mendatang', expired: 'Member Expired', non_member: 'Non-Member' })[status] || status;
 }
 function effectiveMembershipStatus(membership, asOf = new Date()) {
   if (membership.status === 'cancelled') return 'Cancelled';
+  if (membership.status === 'pending') return 'Pending';
   if (membershipIsActive(membership, asOf)) return 'Active';
   if (membership.status === 'active' && membership.start_date > dateKey(asOf)) return 'Pending';
   return 'Expired';
-}
-function classRegistrationError(session, membership) {
-  const status = classSessionStatus(session);
-  if (status === 'completed') return 'Sesi sudah selesai dan tidak menerima pendaftaran.';
-  if (status === 'full') return 'Sesi sudah penuh. Pendaftaran tambahan tidak dapat dilakukan.';
-  if (!membership) return 'Pilih membership yang akan digunakan untuk mendaftar.';
-  if (!membershipIsActive(membership, localClassTime(session.session_date, session.start_time))) return 'Membership tidak aktif pada tanggal sesi ini.';
-  if (!membershipsForClass(session.service, localClassTime(session.session_date, session.start_time)).some((item) => item.id === membership.id)) return `Membership ${planName(membership.plan_id)} tidak mencakup akses ${session.service}.`;
-  return '';
-}
-function classSessionCard(session, selected = false) {
-  const registered = registrationsForSession(session.id).length;
-  const available = classSlotsAvailable(session);
-  const status = classSessionStatus(session);
-  return `<button type="button" class="class-session-card ${selected ? 'selected' : ''}" data-action="select-class-session" data-id="${escapeHtml(session.id)}"><span class="class-session-topline"><strong>${escapeHtml(session.service)}</strong><span class="badge ${status}">${classStatusLabel(status)}</span></span><span class="class-session-date">${date(session.session_date)}</span><span class="class-session-time">${escapeHtml(session.start_time.slice(0, 5))}–${escapeHtml(session.end_time.slice(0, 5))} · ${escapeHtml(session.instructor)}</span><span class="class-session-capacity">${registered} / ${session.capacity} peserta <b>${available} slot tersedia</b></span></button>`;
-}
-function classSessionDetailMarkup(session) {
-  const registrations = state.demoClassRegistrations.filter((registration) => registration.session_id === session.id)
-    .sort((left, right) => left.created_at.localeCompare(right.created_at));
-  const registered = registrationsForSession(session.id).length;
-  const available = classSlotsAvailable(session);
-  const status = classSessionStatus(session);
-  const sessionMemberships = state.data.memberships.filter((membership) => membershipIsActive(membership, localClassTime(session.session_date, session.start_time)));
-  const registrationOptions = sessionMemberships.map((membership) => {
-    const eligible = planAccessServices(planById(membership.plan_id)).includes(session.service);
-    return `<option value="${escapeHtml(membership.id)}">${escapeHtml(customerName(membership.customer_id))} · ${escapeHtml(planName(membership.plan_id))}${eligible ? '' : ' · Tidak termasuk akses'}</option>`;
-  }).join('');
-  return `<aside class="panel class-session-detail"><div class="panel-header"><div><h2 class="panel-title">${escapeHtml(session.service)} · ${escapeHtml(session.start_time.slice(0, 5))}–${escapeHtml(session.end_time.slice(0, 5))}</h2><p class="panel-subtitle">${date(session.session_date)} · ${escapeHtml(session.instructor)}</p></div><span class="badge ${status}">${classStatusLabel(status)}</span></div><div class="class-session-facts"><div><span>Instructor</span><strong>${escapeHtml(session.instructor)}</strong></div><div><span>Kapasitas</span><strong>${session.capacity}</strong></div><div><span>Peserta</span><strong>${registered}</strong></div><div><span>Slot tersedia</span><strong>${available}</strong></div></div>${status === 'available' || status === 'almost_full' ? `<form id="classRegistrationForm" data-session-id="${escapeHtml(session.id)}" class="class-registration-form"><label class="form-row"><span>MEMBERSHIP</span><select class="select-input" name="membership_id" ${sessionMemberships.length ? 'required' : 'disabled'}><option value="">Pilih membership</option>${registrationOptions}</select></label><button class="primary-button" type="submit" ${sessionMemberships.length ? '' : 'disabled'}>Daftarkan member</button></form>` : `<p class="class-session-notice">${status === 'full' ? 'Kapasitas sesi telah tercapai.' : 'Sesi yang sudah lewat tidak menerima pendaftaran baru.'}</p>`}<section class="class-participants"><div class="class-participants-heading"><h3>Daftar Peserta</h3><span>${registered} terdaftar</span></div>${registrations.length ? `<ol>${registrations.map((registration) => { const membership = membershipById(registration.membership_id); const statusLabel = registration.status === 'registered' ? 'Registered' : 'Cancelled'; return `<li><div><strong>${escapeHtml(customerName(membership?.customer_id))}</strong><span>${escapeHtml(planName(membership?.plan_id))}</span></div><span class="badge ${registration.status === 'registered' ? 'active' : 'cancelled'}">${statusLabel}</span>${registration.status === 'registered' ? `<button class="table-action danger" type="button" data-action="cancel-class-registration" data-id="${escapeHtml(registration.id)}">Batalkan</button>` : ''}</li>`; }).join('')}</ol>` : '<div class="empty-state">Belum ada peserta terdaftar.</div>'}</section></aside>`;
-}
-function classSessionFormMarkup() {
-  const today = dateKey(new Date());
-  return `<section class="panel class-session-create"><div class="panel-header"><div><h2 class="panel-title">Buat Sesi</h2><p class="panel-subtitle">Jadwalkan group class FORMÉ.</p></div></div><form id="classSessionForm" class="class-session-form"><label class="form-row"><span>CLASS</span><select class="select-input" name="service" required>${SCHEDULED_CLASSES.map((service) => `<option value="${service}">${service}</option>`).join('')}</select></label><label class="form-row"><span>TANGGAL</span><input class="form-input" type="date" name="session_date" min="${today}" value="${today}" required></label><label class="form-row"><span>MULAI</span><input class="form-input" type="time" name="start_time" required></label><label class="form-row"><span>SELESAI</span><input class="form-input" type="time" name="end_time" required></label><label class="form-row"><span>INSTRUCTOR</span><input class="form-input" name="instructor" maxlength="120" required></label><label class="form-row"><span>KAPASITAS</span><input class="form-input" type="number" name="capacity" min="1" value="${CLASS_CAPACITY_DEFAULTS.Pilates}" required></label><button class="primary-button" type="submit">Simpan sesi</button></form></section>`;
-}
-function renderClassSchedule() {
-  ensureDemoClassSchedule();
-  const filters = state.classFilters;
-  const sessions = state.demoClassSessions.filter((session) =>
-    (filters.service === 'all' || session.service === filters.service) &&
-    (!filters.date || session.session_date === filters.date) &&
-    (filters.status === 'all' || classSessionStatus(session) === filters.status)
-  ).sort((left, right) => left.session_date.localeCompare(right.session_date) || left.start_time.localeCompare(right.start_time));
-  const selected = sessions.find((session) => session.id === state.selectedClassSessionId) || sessions[0];
-  return `<div class="page-heading"><div><div class="eyebrow">STUDIO OPERATIONS / DEMO</div><h1>Class Schedule</h1><p>Jadwal dan pendaftaran simulasi di browser. Nama peserta berasal dari membership yang termuat; tidak disimpan ke Supabase.</p></div><button class="primary-button" data-action="toggle-class-session-form">${state.showClassSessionForm ? 'Tutup form' : '+ Buat sesi demo'}</button></div><div class="toolbar class-schedule-filters"><label class="form-row"><span>CLASS</span><select class="select-input" data-class-filter="service"><option value="all">Semua Class</option>${SCHEDULED_CLASSES.map((service) => `<option value="${service}" ${filters.service === service ? 'selected' : ''}>${service}</option>`).join('')}</select></label><label class="form-row"><span>TANGGAL</span><input class="form-input" type="date" data-class-filter="date" value="${escapeHtml(filters.date)}"></label><label class="form-row"><span>STATUS</span><select class="select-input" data-class-filter="status"><option value="all">Semua</option>${['available', 'almost_full', 'full', 'completed'].map((status) => `<option value="${status}" ${filters.status === status ? 'selected' : ''}>${classStatusLabel(status)}</option>`).join('')}</select></label></div>${state.showClassSessionForm ? classSessionFormMarkup() : ''}<div class="class-schedule-layout"><section class="class-session-list">${sessions.length ? sessions.map((session) => classSessionCard(session, session.id === selected?.id)).join('') : '<div class="panel empty-state">Belum ada sesi yang sesuai filter.</div>'}</section>${selected ? classSessionDetailMarkup(selected) : '<aside class="panel class-session-detail"><div class="empty-state">Pilih sesi untuk melihat detail dan daftar peserta.</div></aside>'}</div>`;
-}
-function saveClassSession(event) {
-  event.preventDefault();
-  const form = event.target;
-  const body = Object.fromEntries(new FormData(form).entries());
-  body.capacity = Number(body.capacity);
-  if (!SCHEDULED_CLASSES.includes(body.service) || !body.session_date || !body.start_time || !body.end_time || !body.instructor || !Number.isInteger(body.capacity) || body.capacity < 1) {
-    showToast('Lengkapi jadwal, instructor, dan kapasitas sesi dengan benar.', true);
-    return;
-  }
-  if (body.end_time <= body.start_time) { showToast('Jam selesai harus setelah jam mulai.', true); return; }
-  if (body.session_date < dateKey(new Date())) { showToast('Tanggal sesi tidak boleh di masa lalu.', true); return; }
-  const session = { ...body, id: `demo-session-${Date.now()}` };
-  state.demoClassSessions = [...state.demoClassSessions, session];
-  state.selectedClassSessionId = session.id;
-  state.showClassSessionForm = false;
-  render();
-  showToast('Sesi demo ditambahkan di browser ini.');
-}
-function registerForClass(event) {
-  event.preventDefault();
-  const session = state.demoClassSessions.find((item) => item.id === event.target.dataset.sessionId);
-  const membership = membershipById(new FormData(event.target).get('membership_id'));
-  if (!session) { showToast('Sesi tidak ditemukan.', true); return; }
-  const registrationError = classRegistrationError(session, membership);
-  if (registrationError) { showToast(registrationError, true); return; }
-  const existing = state.demoClassRegistrations.find((registration) => registration.session_id === session.id && registration.membership_id === membership.id);
-  if (existing?.status === 'registered') { showToast('Membership ini sudah terdaftar pada sesi tersebut.', true); return; }
-  const registration = existing
-    ? { ...existing, status: 'registered', created_at: new Date().toISOString() }
-    : { id: `demo-registration-${Date.now()}`, session_id: session.id, membership_id: membership.id, status: 'registered', created_at: new Date().toISOString() };
-  state.demoClassRegistrations = existing
-    ? state.demoClassRegistrations.map((item) => item.id === existing.id ? registration : item)
-    : [...state.demoClassRegistrations, registration];
-  state.selectedClassSessionId = session.id;
-  render();
-  showToast('Pendaftaran demo diperbarui di browser ini.');
-}
-function cancelClassRegistration(registrationId) {
-  const registration = state.demoClassRegistrations.find((item) => item.id === registrationId);
-  if (!registration || registration.status !== 'registered') return;
-  state.demoClassRegistrations = state.demoClassRegistrations.map((item) => item.id === registrationId ? { ...item, status: 'cancelled' } : item);
-  state.selectedClassSessionId = registration.session_id;
-  render();
-  showToast('Pendaftaran demo dibatalkan; slot diperbarui di browser ini.');
 }
 function revenueTrendMarkup() {
   const current = monthStart(monthKey(new Date()));
@@ -396,14 +239,7 @@ function revenueTrendMarkup() {
   return `<section class="panel"><div class="panel-header"><div><h2 class="panel-title">Revenue Trend</h2><p class="panel-subtitle">Pendapatan membership yang diakui per bulan</p></div><button class="text-button" data-view="reports">Laporan →</button></div><div class="chart-scroll"><div class="revenue-chart">${values.map(({ month, amount }) => `<div class="revenue-bar"><div class="revenue-bar-track"><span style="height:${maximum ? Math.max(amount ? 5 : 0, amount / maximum * 100) : 0}%"></span></div><strong>${money(amount)}</strong><small>${new Intl.DateTimeFormat('id-ID', { month: 'short' }).format(monthStart(month))}</small></div>`).join('')}</div></div></section>`;
 }
 function membershipOverviewMarkup() {
-  const today = dateKey(new Date());
-
-  const activeMemberships = state.data.memberships.filter(
-    (membership) =>
-      membership.status === 'active' &&
-      membership.start_date <= today &&
-      membership.end_date >= today
-  );
+  const activeMemberships = state.data.memberships.filter((membership) => membershipIsActive(membership));
 
   const counts = activeMemberships.reduce((totals, membership) => {
     totals.set(
@@ -472,15 +308,8 @@ function renderOverview() {
   const { customers, memberships, payments, plans } = state.data;
   const today = dateKey(new Date());
   const currentMonth = monthKey(new Date());
-  const active = memberships.filter(
-  (membership) =>
-    membership.status === 'active' &&
-    membership.start_date <= today &&
-    membership.end_date >= today
-);
+  const active = memberships.filter((membership) => membershipIsActive(membership));
   const newMemberships = memberships.filter((membership) => membership.start_date <= today && monthKey(membership.start_date) === currentMonth).length;
-  const paidThisMonth = payments.filter((payment) => payment.status === 'paid' && payment.payment_date <= today && monthKey(payment.payment_date) === currentMonth);
-  const cashThisMonth = paidThisMonth.reduce((sum, payment) => sum + Number(payment.amount), 0);
   const recognizedThisMonth = recognizedForMonth(currentMonth);
   const totals = accountingTotals();
   const limit = new Date(`${today}T00:00:00`);
@@ -489,7 +318,7 @@ function renderOverview() {
   const expiredCount = memberships.filter((membership) => membership.status === 'expired' || membership.status === 'active' && membership.end_date < today).length;
   const paidTransactionCount = payments.filter((payment) => payment.status === 'paid' && payment.payment_date <= today).length;
   const recentPayments = [...payments].sort((left, right) => right.payment_date.localeCompare(left.payment_date)).slice(0, 5);
-  return `<div class="page-heading"><div><div class="eyebrow">FORME / FINANCIAL OVERVIEW</div><h1>Dashboard</h1><p>Aktivitas member dan posisi keuangan studio.</p></div><div class="date-chip">${date(today)}</div></div><div class="stats-grid dashboard-stat-grid">${statCard('ACTIVE MEMBERS', new Set(active.map((membership) => membership.customer_id)).size, `${active.length} kontrak aktif`, true)}${statCard('NEW MEMBERSHIPS', newMemberships, 'mulai pada bulan ini')}${statCard('EXPIRING SOON', expiringCount, 'berakhir dalam 30 hari')}${statCard('EXPIRED MEMBERSHIPS', expiredCount, 'status atau tanggal akhir')}${statCard('CASH RECEIVED', money(totals.cash), `${paidTransactionCount} transaksi lunas`)}${statCard('RECOGNIZED REVENUE', money(recognizedThisMonth), 'diakui bulan berjalan')}${statCard('UNEARNED REVENUE', money(totals.deferred), 'saldo kewajiban layanan')}${statCard('PAID TRANSACTIONS', paidTransactionCount, 'penerimaan sampai hari ini')}</div><div class="dashboard-secondary-grid">${revenueTrendMarkup()}${membershipOverviewMarkup()}</div><div class="content-grid"><section class="panel"><div class="panel-header"><div><h2 class="panel-title">Recent Payments</h2><p class="panel-subtitle">Pembayaran membership terbaru</p></div><button class="text-button" data-view="payments">Lihat semua →</button></div>${paymentTable(recentPayments, true)}</section>${expiringMembershipMarkup()}</div><section class="panel dashboard-plans"><div class="panel-header"><div><h2 class="panel-title">Membership Plans</h2><p class="panel-subtitle">Paket aktif dari katalog Supabase</p></div><button class="text-button" data-view="plans">Lihat semua →</button></div><div class="plan-list">${plans.filter((plan) => plan.is_active !== false).slice(0, 6).map((plan) => `<div class="plan-row"><div><div class="plan-name">${escapeHtml(plan.name)}</div><span class="plan-meta">${durationLabel(plan.duration_months)} · ${escapeHtml(planAccessDescription(plan))}</span></div><div class="plan-total">${money(plan.price)}<small>${memberships.filter((membership) => membership.plan_id === plan.id).length} kontrak</small></div></div>`).join('') || '<div class="empty-state">Belum ada membership plan.</div>'}</div></section>`;
+  return `<div class="page-heading"><div><div class="eyebrow">FORME / FINANCIAL OVERVIEW</div><h1>Dashboard</h1><p>Aktivitas customer, kontrak membership, dan posisi keuangan studio.</p></div><div class="date-chip">${date(today)}</div></div><div class="stats-grid dashboard-stat-grid">${statCard('CUSTOMERS', customers.length, 'customer terdaftar')}${statCard('ACTIVE MEMBERS', new Set(active.map((membership) => membership.customer_id)).size, `${active.length} kontrak aktif`, true)}${statCard('MEMBERSHIP CONTRACTS', memberships.length, 'seluruh kontrak tercatat')}${statCard('NEW MEMBERSHIPS', newMemberships, 'mulai pada bulan ini')}${statCard('EXPIRING SOON', expiringCount, 'berakhir dalam 30 hari')}${statCard('EXPIRED MEMBERSHIPS', expiredCount, 'status atau tanggal akhir')}${statCard('CASH RECEIVED', money(totals.cash), `${paidTransactionCount} transaksi lunas`)}${statCard('RECOGNIZED REVENUE', money(recognizedThisMonth), 'diakui bulan berjalan')}${statCard('UNEARNED REVENUE', money(totals.deferred), 'saldo kewajiban layanan')}${statCard('PAID TRANSACTIONS', paidTransactionCount, 'penerimaan sampai hari ini')}</div><div class="dashboard-secondary-grid">${revenueTrendMarkup()}${membershipOverviewMarkup()}</div><div class="content-grid"><section class="panel"><div class="panel-header"><div><h2 class="panel-title">Recent Payments</h2><p class="panel-subtitle">Pembayaran membership terbaru</p></div><button class="text-button" data-view="payments">Lihat semua →</button></div>${paymentTable(recentPayments, true)}</section>${expiringMembershipMarkup()}</div><section class="panel dashboard-plans"><div class="panel-header"><div><h2 class="panel-title">Membership Plans</h2><p class="panel-subtitle">Paket aktif dari katalog Supabase</p></div><button class="text-button" data-view="plans">Lihat semua →</button></div><div class="plan-list">${plans.filter((plan) => plan.is_active !== false).slice(0, 6).map((plan) => `<div class="plan-row"><div><div class="plan-name">${escapeHtml(plan.name)}</div><span class="plan-meta">${durationLabel(plan.duration_months)} · ${escapeHtml(planAccessDescription(plan))}</span></div><div class="plan-total">${money(plan.price)}<small>${memberships.filter((membership) => membership.plan_id === plan.id).length} kontrak</small></div></div>`).join('') || '<div class="empty-state">Belum ada membership plan.</div>'}</div></section>`;
 }
 function paymentTable(rows, compact = false) { if (!rows.length) return '<div class="empty-state">Belum ada pembayaran.</div>'; return `<div class="table-wrap"><table><thead><tr><th>TANGGAL</th><th>REFERENSI</th><th>CUSTOMER</th><th>MEMBERSHIP / TIPE</th><th>NOMINAL</th><th>METODE</th><th>STATUS</th>${compact ? '' : '<th>AKSI</th>'}</tr></thead><tbody>${rows.map((item) => { const kind = paymentRevenueType(item); const membership = membershipById(item.membership_id); return `<tr><td>${date(item.payment_date)}</td><td class="amount">${escapeHtml(item.reference || 'Tanpa referensi')}</td><td><div class="customer"><span class="customer-avatar">${initials(customerName(item.customer_id))}</span><span class="customer-name">${escapeHtml(customerName(item.customer_id))}</span></div></td><td>${kind === 'membership' ? escapeHtml(planName(membership?.plan_id)) : escapeHtml(paymentRevenueLabel(kind))}</td><td class="amount">${money(item.amount)}</td><td>${paymentMethodLabel(item.payment_method)}</td><td><span class="badge ${item.status}">${statusLabel(item.status)}</span></td>${compact ? '' : `<td>${actionButtons('payment', item.id)}</td>`}</tr>`; }).join('')}</tbody></table></div>`; }
 function customerTable(customers) {
@@ -539,7 +368,7 @@ function filteredMemberships() {
     return !query || `${customerName(membership.customer_id)} ${planName(membership.plan_id)} ${planService(planById(membership.plan_id))}`.toLowerCase().includes(query);
   });
 }
-function renderMembers() { return `<div class="page-heading"><div><div class="eyebrow">CUSTOMER DIRECTORY / 02</div><h1>Customer &amp; Membership</h1><p>Customer tetap tercatat meskipun belum memiliki membership.</p><div class="customer-page-actions"><button class="primary-button" data-action="add-customer">+ Tambah customer</button><button class="secondary-button" data-action="add-membership">+ Tambah membership</button></div></div></div><div class="toolbar customer-filters"><select class="select-input" id="customerFilter"><option value="all" ${state.customerFilter === 'all' ? 'selected' : ''}>Semua Customer</option><option value="active" ${state.customerFilter === 'active' ? 'selected' : ''}>Member Aktif</option><option value="expired" ${state.customerFilter === 'expired' ? 'selected' : ''}>Member Expired</option><option value="non_member" ${state.customerFilter === 'non_member' ? 'selected' : ''}>Non-Member</option></select><input class="search-input" id="customerSearch" placeholder="Cari nama, kode, kontak, atau plan..." value="${escapeHtml(state.customerSearch)}"></div><section class="panel" id="customerPanel">${customerTable(visibleCustomers())}</section>`; }
+function renderMembers() { return `<div class="page-heading"><div><div class="eyebrow">CUSTOMER DIRECTORY / 02</div><h1>Customer</h1><p>Customer tetap tercatat meskipun belum memiliki membership.</p><div class="customer-page-actions"><button class="primary-button" data-action="add-customer">+ Tambah customer</button><button class="secondary-button" data-action="add-membership">+ Tambah membership</button></div></div></div><div class="toolbar customer-filters"><select class="select-input" id="customerFilter"><option value="all" ${state.customerFilter === 'all' ? 'selected' : ''}>Semua Customer</option><option value="active" ${state.customerFilter === 'active' ? 'selected' : ''}>Member Aktif</option><option value="pending" ${state.customerFilter === 'pending' ? 'selected' : ''}>Member Mendatang</option><option value="expired" ${state.customerFilter === 'expired' ? 'selected' : ''}>Member Expired</option><option value="non_member" ${state.customerFilter === 'non_member' ? 'selected' : ''}>Non-Member</option></select><input class="search-input" id="customerSearch" placeholder="Cari nama, kode, kontak, atau plan..." value="${escapeHtml(state.customerSearch)}"></div><section class="panel" id="customerPanel">${customerTable(visibleCustomers())}</section>`; }
 function renderMemberships() {
   const filtered = filteredMemberships();
   return `<div class="page-heading"><div><div class="eyebrow">MEMBERSHIP REGISTER / 03</div><h1>Active Memberships</h1><p>Kontrak layanan berdasarkan status dan periode membership.</p></div><button class="primary-button" data-action="add-membership">+ Tambah membership</button></div><div class="toolbar membership-toolbar"><select class="select-input" id="membershipStatusFilter"><option value="active" ${state.membershipFilter === 'active' ? 'selected' : ''}>Aktif</option><option value="all" ${state.membershipFilter === 'all' ? 'selected' : ''}>Semua status</option><option value="expired" ${state.membershipFilter === 'expired' ? 'selected' : ''}>Berakhir</option><option value="pending" ${state.membershipFilter === 'pending' ? 'selected' : ''}>Pending</option><option value="cancelled" ${state.membershipFilter === 'cancelled' ? 'selected' : ''}>Dibatalkan</option></select><input class="search-input" id="membershipSearch" placeholder="Cari customer, plan, atau service..." value="${escapeHtml(state.membershipSearch)}"></div><section class="panel" id="membershipPanel">${membershipTable(filtered)}</section>`;
@@ -550,7 +379,7 @@ function renderPayments() {
   payments.sort((left, right) => right.payment_date.localeCompare(left.payment_date));
   return `<div class="page-heading"><div><div class="eyebrow">REVENUE REGISTER / 04</div><h1>Payments</h1><p>Riwayat penerimaan kas untuk membership.</p></div><button class="primary-button" data-action="add-payment">+ Catat payment</button></div><div class="toolbar payment-filters"><label class="form-row"><span>DARI</span><input class="form-input" type="date" data-payment-filter="startDate" value="${escapeHtml(filters.startDate)}"></label><label class="form-row"><span>SAMPAI</span><input class="form-input" type="date" data-payment-filter="endDate" value="${escapeHtml(filters.endDate)}"></label><label class="form-row"><span>METODE</span><select class="select-input" data-payment-filter="method"><option value="">Semua</option>${['cash', 'transfer', 'qris'].map((method) => `<option value="${method}" ${filters.method === method ? 'selected' : ''}>${paymentMethodLabel(method)}</option>`).join('')}</select></label><label class="form-row"><span>STATUS</span><select class="select-input" data-payment-filter="status"><option value="">Semua</option>${['paid', 'pending', 'refunded'].map((status) => `<option value="${status}" ${filters.status === status ? 'selected' : ''}>${statusLabel(status)}</option>`).join('')}</select></label></div><section class="panel payment-history-panel"><div class="panel-header"><div><h2 class="panel-title">Payment History</h2><p class="panel-subtitle">${payments.length} dari ${state.data.payments.length} transaksi</p></div></div>${paymentTable(payments)}</section>`;
 }
-function renderPlans() { const services = ['Gym', 'Pilates', 'Yoga', 'Zumba', 'Functional Training', 'Women Only', 'All Access']; const filtered = state.data.plans.filter((plan) => (!state.planFilters.service || planService(plan) === state.planFilters.service) && (!state.planFilters.duration || durationLabel(plan.duration_months) === state.planFilters.duration)); return `<div class="page-heading"><div><div class="eyebrow">MASTER DATA / 05</div><h1>Membership Plans</h1><p>Plan aktual dari membership_plans untuk pencatatan kontrak.</p></div></div><div class="plans-toolbar"><select class="select-input" id="planServiceFilter"><option value="">All services</option>${services.map((service) => `<option value="${service}" ${state.planFilters.service === service ? 'selected' : ''}>${service}</option>`).join('')}</select><select class="select-input" id="planDurationFilter"><option value="">All durations</option>${['Monthly', 'Quarterly', 'Annual'].map((duration) => `<option value="${duration}" ${state.planFilters.duration === duration ? 'selected' : ''}>${duration}</option>`).join('')}</select></div><section class="panel"><div class="panel-header"><div><h2 class="panel-title">Available Plans</h2><p class="panel-subtitle">${filtered.length} dari ${state.data.plans.length} paket</p></div></div><div class="plan-list">${filtered.map((plan) => `<div class="plan-row plan-row-detailed"><div><div class="plan-name">${escapeHtml(plan.name)}</div><span class="plan-meta"><span class="plan-service-label">${escapeHtml(planService(plan))}</span> · ${durationLabel(plan.duration_months)}</span><span class="plan-access">${escapeHtml(planAccessDescription(plan))}</span></div><div class="plan-total">${money(plan.price)}<small>${state.data.memberships.filter((item) => item.plan_id === plan.id).length} pelanggan · ${plan.is_active === false ? 'Inactive' : 'Active'}</small></div></div>`).join('') || '<div class="empty-state">Tidak ada plan yang sesuai filter.</div>'}</div></section>`; }
+function renderPlans() { const services = ['Gym', 'Pilates', 'Yoga', 'Zumba', 'Functional Training', 'Women Only', 'All Access']; const filtered = state.data.plans.filter((plan) => (!state.planFilters.service || planService(plan) === state.planFilters.service) && (!state.planFilters.duration || durationLabel(plan.duration_months) === state.planFilters.duration)); return `<div class="page-heading"><div><div class="eyebrow">MASTER DATA / 05</div><h1>Membership Plans</h1><p>Plan aktual dari membership_plans untuk pencatatan kontrak.</p></div></div><div class="plans-toolbar"><select class="select-input" id="planServiceFilter"><option value="">All services</option>${services.map((service) => `<option value="${service}" ${state.planFilters.service === service ? 'selected' : ''}>${service}</option>`).join('')}</select><select class="select-input" id="planDurationFilter"><option value="">All durations</option>${['Monthly', 'Quarterly', 'Annual'].map((duration) => `<option value="${duration}" ${state.planFilters.duration === duration ? 'selected' : ''}>${duration}</option>`).join('')}</select></div><section class="panel"><div class="panel-header"><div><h2 class="panel-title">Available Plans</h2><p class="panel-subtitle">${filtered.length} dari ${state.data.plans.length} paket</p></div></div><div class="plan-list">${filtered.map((plan) => `<div class="plan-row plan-row-detailed"><div><div class="plan-name">${escapeHtml(plan.name)}</div><span class="plan-meta"><span class="plan-service-label">${escapeHtml(planService(plan))}</span> · ${durationLabel(plan.duration_months)}</span><span class="plan-access">${escapeHtml(planAccessDescription(plan))}</span></div><div class="plan-total">${money(plan.price)}<small>${state.data.memberships.filter((item) => item.plan_id === plan.id).length} kontrak · ${plan.is_active === false ? 'Inactive' : 'Active'}</small></div></div>`).join('') || '<div class="empty-state">Tidak ada plan yang sesuai filter.</div>'}</div></section>`; }
 function reportPaymentForMembership(membershipId, asOf = dateKey(new Date())) { return state.data.payments.find((payment) => payment.membership_id === membershipId && payment.status === 'paid' && payment.payment_date <= asOf); }
 function renderRevenueReport() {
   const today = dateKey(new Date());
@@ -611,7 +440,7 @@ function activeMembershipMarkup() { const active = state.data.memberships.filter
 const servicesMarkup = `<section class="services-section"><div class="section-heading"><div><div class="eyebrow">STUDIO CONTEXT</div><h2>Studio Services</h2><p>Services represented through the available membership plans.</p></div></div><div class="services-grid"><article class="service-card" data-action="view-space" data-space="gym" tabindex="0" role="button"><span class="service-icon">✦</span><div><h3>Gym</h3><p>Strength · Cardio</p></div></article><article class="service-card" data-action="view-space" data-space="pilates" tabindex="0" role="button"><span class="service-icon">◌</span><div><h3>Pilates</h3><p>Core · Mobility</p></div></article><article class="service-card" data-action="view-space" data-space="yoga" tabindex="0" role="button"><span class="service-icon">⌁</span><div><h3>Yoga</h3><p>Balance · Flexibility</p></div></article><article class="service-card" data-action="view-space" data-space="zumba" tabindex="0" role="button"><span class="service-icon">◉</span><div><h3>Zumba</h3><p>Dance · Cardio</p></div></article><article class="service-card" data-action="view-space" data-space="functional" tabindex="0" role="button"><span class="service-icon">＋</span><div><h3>Functional Training</h3><p>Movement · Performance</p></div></article><article class="service-card" data-action="view-space" data-space="women" tabindex="0" role="button"><span class="service-icon">♡</span><div><h3>Women Only</h3><p>Dedicated · Comfortable</p></div></article></div></section>`;
 function render() {
   const content = $('#appContent');
-  const titles = { overview: 'DASHBOARD', members: 'CUSTOMER & MEMBERSHIP', reports: 'REVENUE & REPORTS', plans: 'MEMBERSHIP PLANS', classes: 'CLASS SCHEDULE', journal: 'JURNAL UMUM', ledger: 'BUKU BESAR', settings: 'SETTINGS' };
+  const titles = { overview: 'DASHBOARD', members: 'CUSTOMER', memberships: 'MEMBERSHIP', payments: 'PAYMENTS', reports: 'REVENUE & REPORTS', plans: 'MEMBERSHIP PLANS', journal: 'JURNAL UMUM', ledger: 'BUKU BESAR', settings: 'SETTINGS' };
   $('#pageKicker').textContent = titles[state.view] || state.view.toUpperCase();
   const pages = {
     overview: () => dashboardHeaderMarkup + renderOverview() + servicesMarkup,
@@ -619,7 +448,6 @@ function render() {
     memberships: renderMemberships,
     payments: renderPayments,
     plans: renderPlans,
-    classes: renderClassSchedule,
     reports: renderRevenueReport,
     journal: renderJournal,
     ledger: renderLedger,
@@ -632,7 +460,7 @@ function render() {
 function optionList(items, label) { return items.map((item) => `<option value="${item.id}">${escapeHtml(label(item))}</option>`).join(''); }
 function paymentMembershipOptions(customerId, selectedId = '') { return `<option value="">Pilih membership</option>${state.data.memberships.filter((item) => !customerId || item.customer_id === customerId).map((item) => `<option value="${item.id}" ${item.id === selectedId ? 'selected' : ''}>${escapeHtml(customerName(item.customer_id))} · ${escapeHtml(planName(item.plan_id))} · ${money(item.amount)}</option>`).join('')}`; }
 function inputValue(value) { return escapeHtml(value || ''); }
-function syncMembershipFields(form) { if (!form || form.dataset.type !== 'membership') return; const plan = planById(form.elements.plan_id?.value); const start = form.elements.start_date?.value; const info = form.querySelector('#selectedPlanInfo'); if (info) info.innerHTML = plan ? `<div class="plan-info-grid"><span><b>Service</b>${escapeHtml(planService(plan))}</span><span><b>Duration</b>${durationLabel(plan.duration_months)}</span><span><b>Price</b>${money(plan.price)}</span><span><b>Access</b>${escapeHtml(planAccessDescription(plan))}</span></div>` : ''; if (plan && form.elements.amount) form.elements.amount.value = plan.price; if (plan && start && form.elements.end_date) form.elements.end_date.value = addMonths(start, plan.duration_months); }
+function syncMembershipFields(form) { if (!form || form.dataset.type !== 'membership') return; const plan = planById(form.elements.plan_id?.value); const start = form.elements.start_date?.value; const info = form.querySelector('#selectedPlanInfo'); if (info) info.innerHTML = plan ? `<div class="plan-info-grid"><span><b>Service</b>${escapeHtml(planService(plan))}</span><span><b>Duration</b>${durationLabel(plan.duration_months)}</span><span><b>Price</b>${money(plan.price)}</span><span><b>Access</b>${escapeHtml(planAccessDescription(plan))}</span></div>` : ''; if (plan && form.elements.amount && !form.dataset.id) form.elements.amount.value = plan.price; if (plan && start && form.elements.end_date) form.elements.end_date.value = addMonths(start, plan.duration_months); }
 function syncPaymentFields(form) {
   if (!form || form.dataset.type !== 'payment') return;
   const paymentKind = form.elements.payment_kind?.value || 'membership';
@@ -693,7 +521,7 @@ function validateEntry(type, body, id, paymentKind = 'membership') {
   }
   if (type === 'membership' && (!body.customer_id || !body.plan_id || !body.start_date || !body.end_date)) return 'Customer, plan, dan tanggal wajib diisi.';
   if (type === 'payment' && (!body.customer_id || paymentKind === 'membership' && !body.membership_id || !body.payment_date || !body.payment_method || !body.status)) return 'Customer, kategori payment, tanggal, metode, dan status wajib diisi.';
-  if ((type === 'membership' || type === 'payment') && (!body.amount || Number(body.amount) <= 0)) return 'Amount harus lebih dari 0.';
+  if ((type === 'membership' || type === 'payment') && (!Number.isFinite(Number(body.amount)) || Number(body.amount) <= 0)) return 'Amount harus berupa angka lebih dari 0.';
   if (type === 'membership' && body.end_date < body.start_date) return 'End date tidak boleh sebelum start date.';
   if (type === 'payment') {
     if (paymentKind === 'membership') {
@@ -712,6 +540,7 @@ async function submitEntry(event) {
   event.preventDefault();
   if (!apiReady()) { showToast('Hubungkan Supabase terlebih dahulu untuk menyimpan data.', true); return; }
   const formElement = event.target;
+  if (formElement.dataset.submitting === 'true') return;
   const type = formElement.dataset.type;
   const id = formElement.dataset.id;
   const body = Object.fromEntries(new FormData(formElement).entries());
@@ -731,20 +560,36 @@ async function submitEntry(event) {
   const validationError = validateEntry(type, body, id, paymentKind);
   if (validationError) { showToast(validationError, true); return; }
   const table = collectionFor(type);
+  formElement.dataset.submitting = 'true';
+  const submitButton = formElement.querySelector('[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
   try {
     if (id) {
       const updatedRows = await supabase(table, { method: 'PATCH', query: `?id=eq.${encodeURIComponent(id)}&select=*`, body });
       if (!Array.isArray(updatedRows) || updatedRows.length === 0) throw new Error('Data tidak ditemukan atau tidak dapat diperbarui.');
     } else {
-      await supabase(table, { method: 'POST', body });
+      const insertedRows = await supabase(table, { method: 'POST', body });
+      if (!Array.isArray(insertedRows) || insertedRows.length === 0) throw new Error('Supabase tidak mengembalikan data hasil penyimpanan.');
     }
-    await loadData(false);
     $('#modalBackdrop').hidden = true;
-    render();
-    showToast(`${labelsForType(type)} berhasil ${id ? 'diperbarui' : 'ditambahkan'}.`);
   } catch (error) {
     console.error('Gagal menyimpan data:', error);
     showToast(`Gagal ${id ? 'mengedit' : 'menyimpan'} data: ${supabaseError(error)}`, true);
+    formElement.dataset.submitting = 'false';
+    if (submitButton) submitButton.disabled = false;
+    return;
+  }
+  try {
+    await loadData(false);
+    render();
+    showToast(`${labelsForType(type)} berhasil ${id ? 'diperbarui' : 'ditambahkan'}.`);
+  } catch (error) {
+    console.error('Data tersimpan tetapi sinkronisasi ulang gagal:', error);
+    render();
+    showToast(`${labelsForType(type)} tersimpan, tetapi data terbaru gagal dimuat: ${supabaseError(error)}`, true);
+  } finally {
+    formElement.dataset.submitting = 'false';
+    if (submitButton) submitButton.disabled = false;
   }
 }
 function labelsForType(type) { return type === 'customer' ? 'Customer' : type === 'membership' ? 'Membership' : 'Payment'; }
@@ -754,21 +599,25 @@ async function deleteEntry(type, id) {
   if (!window.confirm(`Hapus ${label} ini? Tindakan ini tidak dapat dibatalkan.`)) return;
   const table = collectionFor(type);
   try {
-    await supabase(table, { method: 'DELETE', query: `?id=eq.${encodeURIComponent(id)}` });
+    const deletedRows = await supabase(table, { method: 'DELETE', query: `?id=eq.${encodeURIComponent(id)}&select=*` });
+    if (!Array.isArray(deletedRows) || deletedRows.length === 0) throw new Error('Data tidak ditemukan atau tidak dapat dihapus.');
+  } catch (error) {
+    console.error('Gagal menghapus data:', error);
+    showToast(`Data gagal dihapus: ${supabaseError(error)}`, true);
+    return;
+  }
+  try {
     await loadData(false);
     render();
     showToast(`${label} berhasil dihapus.`);
   } catch (error) {
-    console.error('Gagal menghapus data:', error);
-    showToast('Data gagal dihapus. Periksa policy Supabase.', true);
+    console.error('Data terhapus tetapi sinkronisasi ulang gagal:', error);
+    render();
+    showToast(`${label} terhapus, tetapi data terbaru gagal dimuat: ${supabaseError(error)}`, true);
   }
 }
 document.addEventListener('click', (event) => { const target = event.target.closest('[data-action="view-active-memberships"]'); if (!target) return; state.view = 'members'; state.customerFilter = 'active'; document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === 'members')); render(); });
-document.addEventListener('click', (event) => { const nav = event.target.closest('[data-view]'); if (nav) { state.view = nav.dataset.view; document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item === nav)); render(); return; } const target = event.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action; if (action === 'add-customer') openModal('customer'); if (action === 'add-membership') openModal('membership'); if (action === 'add-payment') openModal('payment'); if (action === 'view-payments') { state.view = 'payments'; render(); } if (action === 'view-membership-plans') { state.view = 'plans'; document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === 'plans')); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } if (action === 'toggle-class-session-form') { state.showClassSessionForm = !state.showClassSessionForm; render(); } if (action === 'select-class-session') { state.selectedClassSessionId = target.dataset.id; render(); } if (action === 'cancel-class-registration') void cancelClassRegistration(target.dataset.id); if (action === 'edit') openModal(target.dataset.type, state.data[collectionFor(target.dataset.type)].find((item) => item.id === target.dataset.id)); if (action === 'delete') void deleteEntry(target.dataset.type, target.dataset.id); if (action === 'view-space') openSpaceDetail(target.dataset.space); });
-document.addEventListener('click', (event) => {
-  const trigger = event.target.closest('[data-action="add-payment"], [data-action="edit"][data-type="payment"]');
-  if (trigger) queueMicrotask(() => enhancePaymentKindForm($('#entryForm')));
-});
+document.addEventListener('click', (event) => { const nav = event.target.closest('[data-view]'); if (nav) { state.view = nav.dataset.view; document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item === nav)); render(); return; } const target = event.target.closest('[data-action]'); if (!target) return; const action = target.dataset.action; if (action === 'add-customer') openModal('customer'); if (action === 'add-membership') openModal('membership'); if (action === 'add-payment') openModal('payment'); if (action === 'view-payments') { state.view = 'payments'; render(); } if (action === 'view-membership-plans') { state.view = 'plans'; document.querySelectorAll('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.view === 'plans')); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } if (action === 'edit') openModal(target.dataset.type, state.data[collectionFor(target.dataset.type)].find((item) => item.id === target.dataset.id)); if (action === 'delete') void deleteEntry(target.dataset.type, target.dataset.id); if (action === 'view-space') openSpaceDetail(target.dataset.space); });
 document.addEventListener('click', (event) => {
   const trigger = event.target.closest('[data-action="add-payment"], [data-action="edit"][data-type="payment"]');
   if (trigger) queueMicrotask(() => enhancePaymentKindForm($('#entryForm')));
@@ -777,13 +626,19 @@ document.addEventListener('click', (event) => { const journalTrigger = event.tar
 document.addEventListener('keydown', (event) => { if ((event.key === 'Enter' || event.key === ' ') && event.target.matches('.service-card')) { event.preventDefault(); openSpaceDetail(event.target.dataset.space); } });
 document.addEventListener('change', (event) => {
   const target = event.target;
-  if (target.dataset.classFilter) { state.classFilters[target.dataset.classFilter] = target.value; state.selectedClassSessionId = ''; render(); return; }
-  if (target.name === 'service' && target.form?.id === 'classSessionForm') target.form.elements.capacity.value = CLASS_CAPACITY_DEFAULTS[target.value] || 12;
   if (target.name === 'payment_kind') { syncPaymentFields(target.form); return; }
   if (target.id === 'customerFilter') { state.customerFilter = target.value; render(); return; }
-  if (target.name === 'payment_kind') { syncPaymentFields(target.form); return; }
-  $('#quickAddButton').addEventListener('click', () => { openModal('payment'); queueMicrotask(() => enhancePaymentKindForm($('#entryForm'))); });
-  if (target.dataset.periodFilter) { state.financeFilters[target.dataset.periodFilter] = target.value; render(); return; }
+  if (target.dataset.periodFilter) {
+    const nextFilters = { ...state.financeFilters, [target.dataset.periodFilter]: target.value };
+    if (nextFilters.startDate && nextFilters.endDate && nextFilters.startDate > nextFilters.endDate) {
+      showToast('Tanggal awal tidak boleh setelah tanggal akhir.', true);
+      target.value = state.financeFilters[target.dataset.periodFilter];
+      return;
+    }
+    state.financeFilters = nextFilters;
+    render();
+    return;
+  }
   if (target.dataset.paymentFilter) { state.paymentFilters[target.dataset.paymentFilter] = target.value; render(); return; }
   if (target.dataset.financeAccount) { state.financeFilters.account = target.value; render(); return; }
   if (target.id === 'planServiceFilter') { state.planFilters.service = target.value; render(); }
@@ -798,10 +653,23 @@ document.addEventListener('change', (event) => {
   if (target.name === 'membership_id') syncPaymentFields(target.form);
 });
 $('#quickAddButton').addEventListener('click', () => { openModal('payment'); queueMicrotask(() => enhancePaymentKindForm($('#entryForm'))); });
-$('#refreshButton').addEventListener('click', async () => { try { await loadData(); render(); } catch (error) {} });
+$('#refreshButton').addEventListener('click', () => { void loadData().catch((error) => console.error('Gagal memuat ulang data Supabase:', error)); });
 $('#closeModal').addEventListener('click', () => { $('#modalBackdrop').hidden = true; });
 document.addEventListener('click', (event) => { if (event.target.id === 'cancelModal') $('#modalBackdrop').hidden = true; });
-document.addEventListener('submit', (event) => { if (event.target.id === 'entryForm') { void submitEntry(event); return; } if (event.target.id === 'classSessionForm') { void saveClassSession(event); return; } if (event.target.id === 'classRegistrationForm') { void registerForClass(event); return; } if (event.target.id === 'settingsForm') { event.preventDefault(); state.config = { url: $('#projectUrl').value.replace(/\/$/, ''), key: $('#publishableKey').value.trim() }; localStorage.setItem('studioGymConfig', JSON.stringify(state.config)); loadData().then(render).catch(() => render()); } });
+document.addEventListener('submit', (event) => {
+  if (event.target.id === 'entryForm') { void submitEntry(event); return; }
+  if (event.target.id !== 'settingsForm') return;
+  event.preventDefault();
+  const nextConfig = { url: $('#projectUrl').value.replace(/\/$/, ''), key: $('#publishableKey').value.trim() };
+  try {
+    localStorage.setItem('studioGymConfig', JSON.stringify(nextConfig));
+    state.config = nextConfig;
+    void loadData().catch((error) => console.error('Gagal menyinkronkan konfigurasi Supabase:', error));
+  } catch (error) {
+    console.error('Konfigurasi Supabase tidak dapat disimpan:', error);
+    showToast('Konfigurasi tidak dapat disimpan di browser ini.', true);
+  }
+});
 document.addEventListener('input', (event) => {
   if (event.target.id === 'customerSearch') {
     state.customerSearch = event.target.value;
@@ -814,4 +682,4 @@ document.addEventListener('input', (event) => {
 });
 $('#todayLabel').textContent = new Intl.DateTimeFormat('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
 render();
-loadData().catch(() => {});
+loadData().catch((error) => console.error('Gagal memuat data Supabase:', error));
