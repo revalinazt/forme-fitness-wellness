@@ -37,11 +37,6 @@ create table if not exists public.membership_plans (
   created_at timestamptz not null default now()
 );
 
--- Remove the temporary frontend-class persistence upgrade; FORMÉ keeps its four-table ERD.
-drop table if exists public.class_registrations;
-drop table if exists public.class_sessions;
-alter table public.membership_plans drop column if exists access_services;
-
 create table if not exists public.memberships (
   id uuid primary key default gen_random_uuid(),
   customer_id uuid not null references public.customers(id) on delete cascade,
@@ -93,15 +88,8 @@ end $$;
 alter table public.payments add column if not exists membership_id uuid references public.memberships(id) on delete restrict;
 alter table public.payments add column if not exists notes text;
 
-update public.payments payment
-set membership_id = (
-  select membership.id
-  from public.memberships membership
-  where membership.customer_id = payment.customer_id
-  order by membership.start_date desc, membership.created_at desc
-  limit 1
-)
-where payment.membership_id is null;
+-- Do not guess which contract a historical payment belongs to. Reconcile these rows
+-- against source documents before assigning membership_id.
 
 create index if not exists payments_customer_id_idx on public.payments(customer_id);
 create index if not exists payments_membership_id_idx on public.payments(membership_id);
@@ -127,7 +115,7 @@ drop policy if exists "public delete customers" on public.customers;
 create policy "public delete customers" on public.customers for delete to anon, authenticated using (true);
 
 drop policy if exists "public read plans" on public.membership_plans;
-create policy "public read plans" on public.membership_plans for select to anon, authenticated using (is_active = true);
+create policy "public read plans" on public.membership_plans for select to anon, authenticated using (true);
 
 drop policy if exists "public read memberships" on public.memberships;
 create policy "public read memberships" on public.memberships for select to anon, authenticated using (true);
@@ -164,5 +152,3 @@ from (values
   ('All Access Monthly', 1, 750000::numeric, 'Gym + Pilates + Yoga + Zumba + Functional Training + Women Only'), ('All Access Quarterly', 3, 2000000::numeric, 'Gym + Pilates + Yoga + Zumba + Functional Training + Women Only'), ('All Access Annual', 12, 6500000::numeric, 'Gym + Pilates + Yoga + Zumba + Functional Training + Women Only')
 ) as seed(name, duration_months, price, access_label)
 where not exists (select 1 from public.membership_plans current_plan where current_plan.name = seed.name);
-
-
