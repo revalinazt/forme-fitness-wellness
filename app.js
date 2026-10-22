@@ -13,10 +13,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const requestPath = decodeURIComponent(req.url.split('?')[0]);
+  let requestPath;
+  try {
+    requestPath = decodeURIComponent(req.url.split('?')[0]);
+  } catch (error) {
+    res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Bad request');
+    return;
+  }
   const requested = requestPath === '/' ? '/index.html' : requestPath;
-  const filePath = path.normalize(path.join(publicDir, requested));
-  if (!filePath.startsWith(publicDir)) {
+  const filePath = path.resolve(publicDir, `.${requested}`);
+  const relativePath = path.relative(publicDir, filePath);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
     res.writeHead(403);
     res.end('Forbidden');
     return;
