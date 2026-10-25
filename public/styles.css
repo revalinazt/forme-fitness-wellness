@@ -348,6 +348,17 @@ tbody tr:hover { background: #faf8f2; }
 .loading-banner { margin: -18px 0 20px; padding: 11px 14px; border-left: 3px solid var(--emerald); color: var(--muted); background: var(--surface-soft); font: 11px 'DM Mono', monospace; }
 .customer-page-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 16px; }
 .customer-filters { display: grid; grid-template-columns: minmax(210px, 270px) minmax(0, 1fr); gap: 10px; margin-bottom: 17px; }
+.customer-table { min-width: 1080px; table-layout: fixed; }
+.customer-table th:nth-child(1), .customer-table td:nth-child(1) { width: 29%; white-space: normal; }
+.customer-table th:nth-child(2), .customer-table td:nth-child(2) { width: 12%; }
+.customer-table th:nth-child(3), .customer-table td:nth-child(3) { width: 20%; white-space: normal; }
+.customer-table th:nth-child(4), .customer-table td:nth-child(4) { width: 20%; }
+.customer-table th:nth-child(5), .customer-table td:nth-child(5) { width: 12%; }
+.customer-table th:nth-child(6), .customer-table td:nth-child(6) { width: 7%; }
+.customer-table .customer { min-width: 0; align-items: flex-start; }
+.customer-table .customer > div { min-width: 0; overflow-wrap: anywhere; }
+.customer-table .customer-name, .customer-table .customer-id, .customer-table .customer-note { white-space: normal; overflow-wrap: anywhere; }
+.customer-table .row-actions { justify-content: flex-start; }
 .customer-membership-item { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 7px 10px; padding: 9px 0; border-bottom: 1px solid var(--line); white-space: normal; overflow-wrap: anywhere; }
 .customer-membership-item:last-child { border-bottom: 0; }
 .customer-membership-item > div:first-child { min-width: 0; display: grid; gap: 4px; }
